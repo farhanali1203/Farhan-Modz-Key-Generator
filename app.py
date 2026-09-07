@@ -113,8 +113,9 @@ def validate_password(password):
 def validate_custom_format(pattern):
     if not pattern:
         return False
-    allowed_chars = set('XXx9Hh?*' + string.ascii_letters + string.digits + '-_')
-    return all(c in allowed_chars for c in pattern) and len(pattern) > 0
+    # Allow all characters - they'll be treated as literals
+    # Only validate length
+    return len(pattern) > 0 and len(pattern) <= 100
 
 def generate_key(format_type='default'):
     chars = string.ascii_uppercase + string.digits
@@ -156,6 +157,7 @@ def generate_custom_key(pattern):
         elif char == '*':
             result.append(secrets.choice(chars_upper + chars_lower + chars_digits))
         else:
+            # For any other character, use it as a literal
             result.append(char)
     return ''.join(result)
 
@@ -190,7 +192,7 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# Templates (same as before, but compressed for Vercel)
+# Templates
 INDEX_TEMPLATE = '''
 <!DOCTYPE html>
 <html>
@@ -307,7 +309,7 @@ INDEX_TEMPLATE = '''
             <div class="grid-2" style="margin-top:10px;">
                 <div>
                     <label>Custom Format (optional)</label>
-                    <input type="text" id="customFormat" placeholder="Enter custom format (e.g., KEY-XXXX-XXXX)" disabled>
+                    <input type="text" id="customFormat" placeholder="Enter custom format (e.g., KEY-XXXX-XXXX or FarhanModz)" disabled>
                 </div>
             </div>
             <button class="btn btn-success" onclick="generateKey()">Generate Key</button>
@@ -316,14 +318,6 @@ INDEX_TEMPLATE = '''
         <div class="card">
             <div class="card-title">Your Keys</div>
             <div id="keysList"><p style="color:#666;">Loading keys...</p></div>
-        </div>
-        
-        <div class="card">
-            <div class="card-title">API Connection</div>
-            <div id="apiStatus" class="api-status">API Status: Online - Enjoy!</div>
-            <p style="color:#666; margin-bottom:10px;">Use this API key in your panel: <span style="color:#ff0066;">/api/connect</span></p>
-            <div id="apiKeyDisplay"><p style="color:#666;">Loading API key...</p></div>
-            <button class="btn btn-warning" onclick="generateApiKey()">Generate API Key</button>
         </div>
         
         <div class="card">
@@ -366,29 +360,18 @@ INDEX_TEMPLATE = '''
                 formatSelect.addEventListener('change', function() {
                     if (this.value === 'custom') {
                         customField.disabled = false;
-                        customField.placeholder = 'Enter custom format (e.g., KEY-XXXX-XXXX)';
+                        customField.placeholder = 'Enter custom format (e.g., KEY-XXXX-XXXX or FarhanModz)';
                     } else {
                         customField.disabled = true;
                         customField.value = '';
-                        customField.placeholder = 'Enter custom format (e.g., KEY-XXXX-XXXX)';
+                        customField.placeholder = 'Enter custom format (e.g., KEY-XXXX-XXXX or FarhanModz)';
                     }
                 });
             }
         });
         
-        fetch('/api/connect')
-            .then(res => res.json())
-            .then(data => {
-                if (data.status) {
-                    const el = document.getElementById('apiStatus');
-                    if (el) el.textContent = 'API Status: ' + data.status;
-                }
-            })
-            .catch(() => {});
-        
         {% if session.user_id %}
         loadKeys();
-        loadApiKey();
         loadStats();
         {% endif %}
         
@@ -542,44 +525,6 @@ INDEX_TEMPLATE = '''
                 }
             })
             .catch(() => alert('Error updating key'));
-        }
-        
-        function loadApiKey() {
-            fetch('/api/connect')
-                .then(res => res.json())
-                .then(data => {
-                    const container = document.getElementById('apiKeyDisplay');
-                    if (data.api_key) {
-                        container.innerHTML = `
-                            <div class="key-display">
-                                <span>API Key:</span> ${data.api_key}
-                            </div>
-                            <p style="color:#666; font-size:0.8rem;">Use this key in your panel header: X-API-Key</p>
-                        `;
-                    } else {
-                        container.innerHTML = '<p style="color:#666;">No API key found. Generate one!</p>';
-                    }
-                })
-                .catch(() => {
-                    document.getElementById('apiKeyDisplay').innerHTML = '<p style="color:#ff0066;">Error loading API key</p>';
-                });
-        }
-        
-        function generateApiKey() {
-            fetch('/api/connect/generate', { 
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.success) { 
-                    alert('API Key generated successfully!'); 
-                    loadApiKey(); 
-                } else { 
-                    alert('Error: ' + (data.error || 'Unknown error')); 
-                }
-            })
-            .catch(() => alert('Error generating API key'));
         }
         
         function loadStats() {
@@ -873,41 +818,7 @@ def logout():
 # API Routes
 @app.route('/api/connect', methods=['GET'])
 def api_connect():
-    user_id = session.get('user_id')
-    if user_id:
-        for conn in api_connections.values():
-            if conn['user_id'] == user_id and conn['is_active']:
-                return jsonify({
-                    'status': 'Online - Enjoy!',
-                    'api_key': conn['api_key']
-                })
-        return jsonify({'status': 'Online - Enjoy!', 'api_key': None})
-    return jsonify({'status': 'Online - Enjoy!', 'message': 'Login to get your API key'})
-
-@app.route('/api/connect/generate', methods=['POST'])
-@login_required
-def generate_api_connection():
-    user_id = session.get('user_id')
-    
-    # Deactivate old API keys
-    for conn in api_connections.values():
-        if conn['user_id'] == user_id:
-            conn['is_active'] = False
-    
-    global api_counter
-    api_counter += 1
-    api_key = generate_api_key()
-    
-    conn = {
-        'id': api_counter,
-        'user_id': user_id,
-        'api_key': api_key,
-        'created_at': get_utc_now(),
-        'is_active': True
-    }
-    api_connections[api_key] = conn
-    
-    return jsonify({'success': True, 'api_key': api_key})
+    return jsonify({'status': 'Online - Enjoy!'})
 
 @app.route('/api/key/generate', methods=['POST'])
 @login_required
