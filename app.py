@@ -31,9 +31,7 @@ CORS(app)
 # In-memory storage (works on Vercel)
 users = {}
 keys = {}
-api_connections = {}
 key_counter = 1
-api_counter = 1
 
 # Initialize default users
 def init_default_users():
@@ -110,79 +108,21 @@ def validate_password(password):
         return False, "Password must contain at least one number"
     return True, "Password is valid"
 
-def validate_custom_format(pattern):
-    if not pattern:
-        return False
-    # Allow all characters - they'll be treated as literals
-    # Only validate length
-    return len(pattern) > 0 and len(pattern) <= 100
-
-def generate_key(format_type='default'):
+def generate_random_key():
+    """Generate a random 32-character key"""
     chars = string.ascii_uppercase + string.digits
-    if format_type == 'default':
-        return ''.join(secrets.choice(chars) for _ in range(32))
-    elif format_type == 'hex':
-        return ''.join(secrets.choice('0123456789ABCDEF') for _ in range(32))
-    elif format_type == 'mixed':
-        return ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
-    elif format_type == 'numbers':
-        return ''.join(secrets.choice(string.digits) for _ in range(32))
-    elif format_type == 'lowercase':
-        return ''.join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(32))
-    elif format_type == 'uppercase':
-        return ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(32))
-    else:
-        return ''.join(secrets.choice(chars) for _ in range(32))
+    return ''.join(secrets.choice(chars) for _ in range(32))
 
-def generate_custom_key(pattern):
-    result = []
-    chars_upper = string.ascii_uppercase
-    chars_lower = string.ascii_lowercase
-    chars_digits = string.digits
-    chars_hex = '0123456789ABCDEF'
-    
-    for char in pattern:
-        if char == 'X':
-            result.append(secrets.choice(chars_upper))
-        elif char == 'x':
-            result.append(secrets.choice(chars_lower))
-        elif char == '9':
-            result.append(secrets.choice(chars_digits))
-        elif char == 'H':
-            result.append(secrets.choice(chars_hex))
-        elif char == 'h':
-            result.append(secrets.choice(chars_hex.lower()))
-        elif char == '?':
-            result.append(secrets.choice(chars_upper + chars_digits))
-        elif char == '*':
-            result.append(secrets.choice(chars_upper + chars_lower + chars_digits))
-        else:
-            # For any other character, use it as a literal
-            result.append(char)
-    return ''.join(result)
-
-def generate_unique_key(format_type='default', custom_pattern=None, max_attempts=20):
+def generate_unique_random_key(max_attempts=20):
+    """Generate a unique random key"""
     for _ in range(max_attempts):
-        if custom_pattern:
-            key = generate_custom_key(custom_pattern)
-        else:
-            key = generate_key(format_type)
-        
+        key = generate_random_key()
         if key not in keys:
             return key
     
-    # Fallback
+    # Fallback with timestamp
     timestamp = int(time.time() * 1000)
     return f"KEY-{timestamp}-{secrets.token_hex(8)}"
-
-def generate_api_key():
-    chars = string.ascii_letters + string.digits
-    api_key = 'fm_' + ''.join(secrets.choice(chars) for _ in range(32))
-    
-    for conn in api_connections.values():
-        if conn['api_key'] == api_key:
-            return generate_api_key()
-    return api_key
 
 def login_required(f):
     @wraps(f)
@@ -221,8 +161,6 @@ INDEX_TEMPLATE = '''
         .btn-success:hover { background: #009955; }
         .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
         .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-        .key-display { background: #0a0a0a; padding: 15px; border-radius: 5px; border: 1px solid #00ffcc; margin: 10px 0; word-break: break-all; }
-        .key-display span { color: #ff0066; }
         .table { width: 100%; border-collapse: collapse; margin-top: 15px; }
         .table th, .table td { padding: 10px; border: 1px solid #333; text-align: left; }
         .table th { background: #1a1a1a; color: #00ffcc; }
@@ -240,7 +178,9 @@ INDEX_TEMPLATE = '''
         .user-info { color: #666; font-size: 0.9rem; }
         .telegram-link { color: #0088cc; text-decoration: none; }
         .telegram-link:hover { text-decoration: underline; }
-        .api-status { color: #00cc66; font-weight: bold; }
+        .key-type-badge { display: inline-block; padding: 2px 10px; border-radius: 3px; font-size: 0.7rem; }
+        .badge-random { background: #00ffcc; color: #000; }
+        .badge-custom { background: #ffaa00; color: #000; }
         @media (max-width: 768px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } .header h1 { font-size: 1.8rem; } }
     </style>
 </head>
@@ -294,23 +234,17 @@ INDEX_TEMPLATE = '''
                     <input type="datetime-local" id="expireInput">
                 </div>
                 <div>
-                    <label>Key Format</label>
-                    <select id="keyFormat">
-                        <option value="default">Default (32 chars)</option>
-                        <option value="hex">Hex (0-9A-F)</option>
-                        <option value="mixed">Mixed Case + Numbers</option>
-                        <option value="numbers">Only Numbers</option>
-                        <option value="lowercase">Lowercase + Numbers</option>
-                        <option value="uppercase">Uppercase + Numbers</option>
-                        <option value="custom">Custom Format</option>
+                    <label>Key Type</label>
+                    <select id="keyType">
+                        <option value="random">Random Key (32 chars)</option>
+                        <option value="custom">Custom Key</option>
                     </select>
                 </div>
             </div>
-            <div class="grid-2" style="margin-top:10px;">
-                <div>
-                    <label>Custom Format (optional)</label>
-                    <input type="text" id="customFormat" placeholder="Enter custom format (e.g., KEY-XXXX-XXXX or FarhanModz)" disabled>
-                </div>
+            <div id="customKeyDiv" style="margin-top:10px; display:none;">
+                <label>Enter Your Custom Key</label>
+                <input type="text" id="customKey" placeholder="Enter your custom key (e.g., FarhanModz2024)">
+                <p style="color:#00cc66; font-size:0.8rem; margin-top:5px;">✓ Your key will be used EXACTLY as entered. No changes will be made!</p>
             </div>
             <button class="btn btn-success" onclick="generateKey()">Generate Key</button>
         </div>
@@ -332,7 +266,6 @@ INDEX_TEMPLATE = '''
                 - Generate license keys for your applications<br>
                 - Each key works for specified number of devices<br>
                 - Keys expire automatically after set date<br>
-                - API access available for developers<br>
                 - All keys are securely stored<br><br>
                 <strong>Made By:</strong> @FarhanModzBack<br>
                 <strong>Telegram Channel:</strong> <a href="https://t.me/+VTaPNYle6eViNmQx" target="_blank" class="telegram-link">Join Channel</a><br>
@@ -354,17 +287,16 @@ INDEX_TEMPLATE = '''
     
     <script>
         document.addEventListener('DOMContentLoaded', function() {
-            const formatSelect = document.getElementById('keyFormat');
-            const customField = document.getElementById('customFormat');
-            if (formatSelect) {
-                formatSelect.addEventListener('change', function() {
+            const keyTypeSelect = document.getElementById('keyType');
+            const customDiv = document.getElementById('customKeyDiv');
+            
+            if (keyTypeSelect) {
+                keyTypeSelect.addEventListener('change', function() {
                     if (this.value === 'custom') {
-                        customField.disabled = false;
-                        customField.placeholder = 'Enter custom format (e.g., KEY-XXXX-XXXX or FarhanModz)';
+                        customDiv.style.display = 'block';
                     } else {
-                        customField.disabled = true;
-                        customField.value = '';
-                        customField.placeholder = 'Enter custom format (e.g., KEY-XXXX-XXXX or FarhanModz)';
+                        customDiv.style.display = 'none';
+                        document.getElementById('customKey').value = '';
                     }
                 });
             }
@@ -381,12 +313,14 @@ INDEX_TEMPLATE = '''
                 .then(data => {
                     const container = document.getElementById('keysList');
                     if (data.keys && data.keys.length > 0) {
-                        let html = '<table class="table"><tr><th>Key</th><th>Devices</th><th>Expires</th><th>Status</th><th>Actions</th></tr>';
+                        let html = '<table class="table"><tr><th>Key</th><th>Type</th><th>Devices</th><th>Expires</th><th>Status</th><th>Actions</th></tr>';
                         data.keys.forEach(k => {
                             const status = k.is_active && new Date(k.expires) > new Date() ? 'Active' : 'Expired';
                             const statusClass = status === 'Active' ? 'status-active' : 'status-expired';
+                            const typeBadge = k.is_custom ? '<span class="key-type-badge badge-custom">Custom</span>' : '<span class="key-type-badge badge-random">Random</span>';
                             html += `<tr>
                                 <td><span style="font-size:0.8rem;">${k.key}</span></td>
+                                <td>${typeBadge}</td>
                                 <td>${k.devices}</td>
                                 <td>${k.expires}</td>
                                 <td class="${statusClass}">${status}</td>
@@ -410,8 +344,8 @@ INDEX_TEMPLATE = '''
         function generateKey() {
             const devices = document.getElementById('devicesInput').value;
             const expire = document.getElementById('expireInput').value;
-            const format = document.getElementById('keyFormat').value;
-            const customFormat = document.getElementById('customFormat').value;
+            const keyType = document.getElementById('keyType').value;
+            const customKey = document.getElementById('customKey').value;
             
             if (!expire) { 
                 alert('Please select an expire date'); 
@@ -424,14 +358,20 @@ INDEX_TEMPLATE = '''
                 return;
             }
             
+            // For custom key, validate that custom key is entered
+            if (keyType === 'custom' && !customKey) {
+                alert('Please enter your custom key');
+                return;
+            }
+            
             const data = {
                 devices: parseInt(devices) || 1,
                 expires: expire,
-                format: format
+                key_type: keyType
             };
             
-            if (format === 'custom' && customFormat) {
-                data.custom_format = customFormat;
+            if (keyType === 'custom' && customKey) {
+                data.custom_key = customKey;
             }
             
             fetch('/api/key/generate', {
@@ -442,14 +382,16 @@ INDEX_TEMPLATE = '''
             .then(res => res.json())
             .then(data => {
                 if (data.success) { 
-                    alert('Key generated successfully!'); 
+                    alert('✅ Key generated successfully!\\n\\nKey: ' + data.key.key + '\\nType: ' + (data.key.is_custom ? 'Custom' : 'Random') + '\\nDevices: ' + data.key.devices + '\\nExpires: ' + data.key.expires); 
                     loadKeys(); 
                     loadStats();
+                    // Clear custom key field after generation
+                    document.getElementById('customKey').value = '';
                 } else { 
-                    alert('Error: ' + (data.error || 'Unknown error')); 
+                    alert('❌ Error: ' + (data.error || 'Unknown error')); 
                 }
             })
-            .catch(() => alert('Error generating key'));
+            .catch(() => alert('❌ Error generating key'));
         }
         
         function deleteKey(key) {
@@ -816,10 +758,6 @@ def logout():
     return redirect(url_for('index'))
 
 # API Routes
-@app.route('/api/connect', methods=['GET'])
-def api_connect():
-    return jsonify({'status': 'Online - Enjoy!'})
-
 @app.route('/api/key/generate', methods=['POST'])
 @login_required
 def generate_key_api():
@@ -831,8 +769,8 @@ def generate_key_api():
     
     devices = data.get('devices', 1)
     expires_str = data.get('expires')
-    key_format = data.get('format', 'default')
-    custom_format = data.get('custom_format', '')
+    key_type = data.get('key_type', 'random')
+    custom_key = data.get('custom_key', '')
     
     if not expires_str:
         return jsonify({'error': 'Expire date required'}), 400
@@ -853,20 +791,21 @@ def generate_key_api():
     except:
         return jsonify({'error': 'Invalid devices count'}), 400
     
-    if key_format == 'custom':
-        if not custom_format:
-            return jsonify({'error': 'Custom format pattern required'}), 400
-        if not validate_custom_format(custom_format):
-            return jsonify({'error': 'Invalid custom format pattern'}), 400
-    
-    try:
-        if key_format == 'custom':
-            key_string = generate_unique_key(custom_pattern=custom_format)
-        else:
-            key_string = generate_unique_key(format_type=key_format)
-    except Exception as e:
-        print(f"Key generation error: {e}")
-        key_string = f"FM-{secrets.token_hex(16)}"
+    # Handle key generation based on type
+    if key_type == 'custom':
+        if not custom_key:
+            return jsonify({'error': 'Custom key is required'}), 400
+        
+        # Check if key already exists
+        if custom_key in keys:
+            return jsonify({'error': 'This key already exists. Please use a different key.'}), 400
+        
+        key_string = custom_key
+        is_custom = True
+    else:
+        # Generate random key
+        key_string = generate_unique_random_key()
+        is_custom = False
     
     global key_counter
     key_counter += 1
@@ -877,7 +816,8 @@ def generate_key_api():
         'expires': expires.isoformat(),
         'created_at': get_utc_now(),
         'user_id': user_id,
-        'is_active': True
+        'is_active': True,
+        'is_custom': is_custom
     }
     keys[key_string] = key
     
@@ -886,7 +826,8 @@ def generate_key_api():
         'key': {
             'key': key_string,
             'devices': devices,
-            'expires': expires.isoformat()
+            'expires': expires.isoformat(),
+            'is_custom': is_custom
         }
     })
 
@@ -965,7 +906,8 @@ def get_keys():
             'devices': k['devices'],
             'expires': k['expires'],
             'is_active': k['is_active'],
-            'created_at': k['created_at']
+            'created_at': k['created_at'],
+            'is_custom': k.get('is_custom', False)
         } for k in user_keys]
     })
 
